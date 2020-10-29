@@ -1,0 +1,1608 @@
+
+==================
+Node Architecture
+=================
+
+--> containers within pod share same network and communicate using localhost and port. ports must be unique within pod
+--> inter-pods communication happens over a network
+
+ kubelet will launch the pods. It gets the information from master ( api server )
+ kube proxy will update the ip tables as to which pod exists on which node. The ip tables will route it to right ip. 
+
+
+======================
+ReplicationController
+======================
+All the controllers like rc,rs,ds etc are managed by kube-controller-manager  ==> if rc/rs are not scaling --> should check kube-controller-manager
+
+we can scale stateless applications horizontally.
+
+statelss applications -- the application doesn't have state. it doesn't save files locally
+
+to make applications stateless -- save any data outside of container ( be it session management, or any files )
+
+In k8 --> replicationcontroller and replica set will helps us in scaling.
+
+replicationcontroller --> make sure  desired number = actual number of pods at all time
+
+Scale the number of replicas
+k scale rc/<rc name> --replicas=<number>
+k scale --replicas=<nubmer> -f <file_name>
+
+delete the rc but keep the pods running
+k delete rc/rc1 --cascade=false
+
+=============
+Deployments --> template,replicas,selector(matchLabels)
+=============
+
+Deployment --> deploy an application,update it, rollback,rolling update,pause/resume deployment. doing all this with rc/rs will be too much manual work
+
+Deployment -- takes care of state of application and replicas
+
+
+replica set -- newer generation rc - it can do selection based on filtering
+
+eg: env either dev or qa
+
+deployments
+  create - deploy an app
+  update -- deploy new version
+  rollback -- go back to newer version
+  rolling update -- No downtime ( deploy in steps )
+  pause/resume -- pause/resume and do updates on nodes/pod
+
+------
+create
+------
+ 
+k create deployment dp1 --image=<img name> --port=<number> --replicas=4
+k scale deploy/dp1 --replicas=4
+
+k create deployment dp1 --image=<img name> --port=<number> --replicas=4 --dry-run=client -o yaml > dp1.yaml
+k create deployment dp1 --image=<img name> --port=<number> -r 4
+
+------
+update
+------
+k set image deploy/dp1 <container name>=<new image>
+k edit deploy/dp1
+
+--------
+rollback
+--------
+k rollout undo deploy/dp1 --to-revision=<number>
+
+k rollout history deploy/dp1
+
+k rollout status deploy/dp1
+
+k edit deploy/dp1 ----> change revisionHistoryLimit if you want
+
+In vim, for search Case-insensitive =====>  /word\c 
+--------------------------
+rollout to previous version
+--------------------------
+k rollout undo deploy/dp1 
+
+---------------
+edit deployment
+--------------
+
+k edit deploy/dp1
+
+revisionHistoryLimit
+
+-------------------------------------------------------------------------
+For every new version/revision --> New replica set will be created
+k get rs
+
+can go back to new revision anytime
+
+k set image deploy/dp1 <container name>=<new image> --record
+
+--record will save the command in CHANGE-CAUSE of k rollout history deploy/dp1
+
+k get pods --show-labels
+
+===============================
+Services --  port,type,selector
+================================
+pods are dynamic and should only be accesses via services
+
+service will create endpoint for pod/deployment
+
+Service
+1. ClusterIp ( default ) -- only accessible within cluster
+2. NodePort -- accessible externally  via internet on nodeport
+3. LoadBalancer - create load balancer in cloud service provider
+
+
+
+nodeport 30000-32767 but could be changed in the kube-apiserver init scripts
+
+=======
+Labels
+=======
+
+labels --> key value pair
+
+labels --> organise the resources
+selector --> filter/narrow down using labels
+
+
+kubectl get pods -l environment=production,tier=frontend
+
+k label po pod1 app=frontend
+k label node node1 hardware=highspec
+k label node node1 hardware=highspec-      ==> this will delete that label
+
+Overwrite exisiting label
+-----------------------
+k label node two color=blue --overwrite
+
+using selector
+--------------------
+k get nodes --selector color=green
+
+
+Annotations -- used to give additional information 
+
+
+================
+Set-based label
+===============
+
+Three kinds of operators are supported: in,notin and exists
+For exists ==> only key is checked, regardless of the value it will be filtered/selected. sometimes there might be just key and no value ( we find this kind in node labels )
+
+in ====>     environment in (production, qa)
+notin =====> tier notin (frontend, backend)
+partition ====> exists
+!partition ==> not exists
+
+====================
+Manual Scheduling
+===================
+
+How does Scheduler schedule pod on node ?
+It looks for the pods which doesn't have nodeName property assigned and then pick that and assign the node name
+
+If there is no Scheduler and pod was created it will be in pending state
+
+We can do it manually as well.
+set nodeName Property in pod definition file. It is not recommended unless required
+
+setting nodeName property can only be done during creation time.
+
+If pod was already created, we need to create binding object and send post request in json format
+
+
+
+
+===========
+nodeSelector
+===========
+
+Run a pod on specific node -- first label the node and use that in pod definition
+
+k label node node1 hardware=high-spec
+
+add the nodeSelector field in pod definition with that labels
+
+k get nodes --show-labels
+k get pods --show-labels
+
+if there is no label with that label specified in pod definition, the pod will be in Pending state and won't be scheduled
+
+node affinity, anti affinity --> run pods on specific pod, but these are more flexible than nodeSelector
+ 
+we can make use of node affinity to set soft rules 
+   - requiredDuringSchedulingIgnoredDuringExecution --> hard rule, same like nodeSelector
+   - preferredDuringSchedulingIgnoredDuringExecution --> soft rule, schedule if possible, else schedule it another node
+
+
+nodeSelector has limitations, we can't set rules like
+- deploy either on node1 or node2 ( by setting the labels on nodes)
+- deploy on any node except node3 ( by setting the labels on nodes)
+we can achieve the above using node affinity, anti affinity
+
+ 
+============
+Health Checks
+===========
+
+2 types -- run command periodically
+           check URL periodically
+
+application might not work but pod/container is still running, might need a restart
+
+readinessProbe --> if application not ready to accept traffic, remove ip address from service
+receive traffic only when pod is ready to accept
+
+livenessProbe --> kubelet decides when to restart container
+readinessProbe -->kubelet uses readiness probes to know when a container is ready to start accepting traffic and if fails remove ip address from iptables
+
+Any code greater than or equal to 200 and less than 400 indicates success. Any other code indicates failure.
+
+==========
+Pod State
+==========
+k describe po/pod1 
+
+pod state
+  Running- pod bound to node, containers created
+  Pending - accepted but not running
+      --> image not downloadable
+      --> resource constraints
+      --> no node with that label (nodeSelector/nodeaffinity)
+  Succeded
+      --> pod successfully terminated
+  Failed -->
+  Unknown --> state cannot be determined
+
+===============
+Pod Conditions
+==============
+
+1. Pod Scheduled
+2. Ready --> ready to serve requests
+3. Initialized -->  containers in the pod has been initialised
+4. Unschedulable --> pod cannot be scheduled due to resource constraints ( taints/tolerations, nodeaffinity, resource requests)
+5. containerReady --> all containers in pod ready
+
+==============
+Pod Lifecycle
+==============
+
+
+init container
+       only when this container completes main container starts
+       always init containers starts to complete, that why we cant configure readiness/liveness probe
+Main container
+     post start hook
+     --------------
+         This starts with the main container. we can configure it do something at the start of the container
+ 
+     pre stop hook
+     -------------
+         we can configure here to do something right before container stops. like backing up
+
+ we can configure liveness and readiness probe with initial delay seconds equal to time it will take to complete post start hook
+
+==========
+Secrets
+=========
+Secrets are a way to provide credentials or any data to pods
+
+Use as
+ - environment variables
+ - as a file (it uses volumes and mount them in container )
+ - use another image to pull secrets
+
+secrets as environment variables
+------------------------------
+the application will have environment variables, for those we create the secrets.
+or we can configure environment variables in application and create secrets for them.
+
+secrets as a file
+-----------------
+we save the files in the container and configure the application to read it from there.
+
+k describe po/<pod name>         ==> under volumeMounts section, you can find secrets
+
+k exec -it <pod name> -- bash    ==> mount       ==> it will show all the mounts
+
+echo -n "root" > username.txt
+echo -n "password" > password.txt
+
+k create secret generic <name of secret> --from-file=username.txt --from-file=password.txt
+
+secret can be ssh-key or ssl certificates as well.
+=================
+Service Discovery
+=================
+host <service name> --> gives ip address of it
+
+
+full dns --> <name of service>.<namespace>.<kind of service>.cluster.local
+
+dns service --> can be used by within pods to find other services running on same cluster
+
+containers within pod --> communicate using localhost,port
+container in one pod with container in another pod --> communicate using service discovery (DNS service )
+
+k get pod,svc,deploy,ep
+
+k get ep ===> gives endpoint
+
+===========
+ConfigMap
+==========
+
+inject configurations into container
+
+configmap - key:value pairs
+
+Can also inject full config files. where value will be full config file
+
+ConfigMap using
+   - environment variables
+   - volumes
+   - container command line arguments
+
+k create configmap <cm name> --from-file=<file name>
+
+
+
+
+
+
+
+====================
+mounted using volumes
+=====================
+
+nothing but we are putting that files/secrets in the container and we write our application to read that specific file/secret
+from that path
+
+Example
+
+   volumeMounts:
+### The volume we are using
+    - name: config-volume
+### This is where we want our file inside the container to be
+
+
+--------------------------------------------------------------
+create pv first and claim the volume ( pvc )
+
+k8 plugins will provision storage for you. 
+
+StorageClass --> create volume
+PersistentVolumeClaim --> claim the volume, we provide size
+
+block storage --- we use it attach to one instance and cannot be shared by multiple instance
+For db --> we create block storage. One pod(db pod) will have this volume and even if pod goes down, new pod with same state (because of volume) comes up
+
+NFS -- can be shared by multiple instances 
+for Pods --> multiple pods( webserver which need photos/some files)  will share this NFS
+
+============
+pod presets
+============
+
+inject information into pods at runtime
+
+can inject k8 resources like secrets,cm,volumes, environment variables
+
+Eg: 10 pods require specific information ( secret,configuration ), rather than configuring all pods - presets will help
+
+============
+StatefulSets
+============
+
+used to deploy stateful applications
+
+stateful vs stateless application
+--------------------------------
+stateful - applications that store state. i.e store files/data and require/use them to serve the requests
+stateless - applications that doesn't store state. i.e no files/data stored or the files/data is brought in from stateful applications
+
+stateless applications/pods deployed --> using Deployment
+stateful applications/pods deployed  --> using StatefulSet
+
+StatefulSet does samething as Deployment but does few other things
+ 
+stateful applications are deployed differently than stateless applications.
+Eg: database is deployed differently than web server
+
+
+
+
+
+
+============
+DaemonSet
+===========
+
+k get ds
+k get daemonsets
+
+Every single node runs the same pod. It is exactly like ReplicaSet except kind is DaemonSet.
+
+If node is added, pod will be deployed on that node
+If node is removed, pod will be removed from that node and won't be scheduled in other node. i.e no. of nodes = no. of pods
+
+ds are creating using nodeaffinity. In previous version until 1.12, ds were created by setting nodeName propery
+
+
+Use-case:
+monitoring 
+logging 
+Load balancers/ api gateways 
+networking
+
+
+==============
+Static Pods
+=============
+static pod name ====> will end with the name of the node in which it is running
+Eg:   kube-scheduler-master  ==> the pod is running on master node
+      kube-scheduler-node01  ==> the pod is running on node01 node
+
+
+staticPodPath will be defined in kubelet configuration file. Why kubelet configuration file ? because static pods are managed by kubelet
+grep -i staticPodPath <kubelet config file>
+
+
+kubelet receives info from kube api-server as to what pods to be loaded on node ( which is decided by kube-scheduler which is stored in etcd data store).
+
+ What if there is no master at all ? 
+------------------------------------
+Static pods are pods created and managed by kubelet daemon on a specific node without API server observing them.
+
+kubelet only knows how to create a pod ( can't create deployment,rc, service or any other)
+
+How to create pod and how does kubelet know( cuz we cant even communicate as there is no api-server ? 
+-----------------------------------------------------------------------------------------------------
+
+Place the manifest files in staticPodPath( mentioned in kubelet configuration file), kubelet will creates and restarts, recreates if file is change. To delete, just take off the file from that directory
+
+ If the static pod crashes, kubelet restarts them. Control plane is not involved in lifecycle of static pod.
+
+ Kubelet also tries to create a mirror pod on the kubernetes api server for each static pod so that the static pods are visible i.e., when you do kubectl get pod, the mirror object of static pod is also listed.
+
+but those mirrored objects can't be controlled.
+
+how to check if pod exists
+-------------------------
+docker ps
+
+k get po ( only if master node exists but it is only a mirror object ( read only) )
+
+
+Thats how kubeadm uses static pods to bringup kubernetes control plane components like api-server, controller-manager as static pods
+
+When kubeadm is bringing up kubernetes control plane, it generates pod manifests for api-server, controller-manager in a directory ( staticPodPath ) which kubelet is monitoring. Then kubelet brings up these control plane components as static pods
+
+
+ps aux | grep kubelet 
+and look for the configuration file in that output
+
+You can configure a static Pod with 
+ 1. file system hosted configuration file
+--------------------------------------------
+staticPodPath: <the directory> field in the kubelet configuration file, which periodically scans the directory and creates/deletes pods
+ Note that the kubelet will ignore files starting with dots when scanning the specified directory.
+
+ 2. web hosted configuration file
+-----------------------------------
+Kubelet periodically downloads a file specified by --manifest-url=<URL>
+Everything else same as file system hosted
+
+2 places where you can put manifest files
+-----------------------------------------
+--staticPodPath in kubelet configuration file
+--pod-manifest-path in kubelet.service file
+
+=========================
+Resource Usage Monitoring
+=========================
+heapster used be the tool which helps in generating metrics but is now deprecated.
+
+metrics server --> after you deploy metrics server
+
+k top pod
+k top node
+
+===========
+auto scaling
+=============
+
+auto scaling based on metrics
+
+get horizontal pod autoscaling object
+-------------------------------------
+k get hpa 
+
+
+=======================
+node Affinity
+=======================
+
+similar to nodeSelector ( simple way to restrict a pod to node) but node affinity does some complex scheduling
+
+2 types of node affinity:
+  - requiredDuringSchedulingIgnoredDuringExecution --> Hard requirement
+  - preferredDuringSchedulingIgnoredDuringExecution --> Soft requirement
+
+operator ==>> NotIn, Exists, In
+
+Exists ==> just checks if the key exists, value doesn't matter
+
+preferredDuringSchedulingIgnoredDuringExecution - weight 
+
+higher the weight, more the preference
+
+eg 2 rules with weights 1 and 5 for a single node
+
+total weight for that node = 6
+so rule with weight 5 will be given preference
+
+we can also use build-in labels for node.
+
+k describe node <node name> 
+under labels section --> you could find the build in labels and can use them
+
+
+==================================
+Pod affinity and  Anti-Affinity
+=================================
+
+sometimes you want pods to be on same node because pods are colocated or want them in same AZ
+
+we can schedule new pods based on the existing pods labels.
+
+we usually use them when there are more number of nodes ( eg: 100 nodes)
+
+
+=======================
+Taints and Tolerations
+======================
+
+Taints are applied on Node, Tolerations are set to Pod
+
+Taints and tolerations --> what pods can be scheduled on a node
+
+k taint node <node name> key=value:taint-effect
+
+To untaint the node 
+k taint node <node name> key=value:taint-effect-
+
+- at end will take off the taint
+
+
+Taint effect
+1. NoSchedule
+2. PreferNoSchedule
+3. NoExecute
+
+NoSchedule --> only tolerated pods will be on that tainted node, existing pods won't be touched
+PreferNoSchedule --> Tries to put tolerated pods on tainted node, existing pods won't be touched
+NoExecute --> only tolerated pods will be on that tainted node, existing pods that doesn't have tolerations will be terminated on that node.
+
+
+taints and tolerations doesn't guarantee that the pod goes to specific node.
+It only restricts a node from accepting or not accepting a pod ( with/without tolerations ) because tolerated taint might go to node with no taint at all. 
+
+
+
+To Have a specific pod go to specific node --> use node affinity
+
+Reason Why pods are never schedules on Master node 
+-------------------------------------------------
+taint is applied on master node(NoSchedule)  and is a best pracitce to have it
+
+
+In pod definition,  nodeSelector set to node1 --> after that taint is applied on node1 with effect NoExecute, ==> Pod will remain in pending state as node1 has taint effect and pod cannot be scheduled on other node due to nodeSelector
+
+
+
+Use taints and tolerations ==> to restrict nodes not to accept other kind of pods
+Use affinity ==> To accept the pod
+
+Use them together
+----------------
+
+Only affinity ==> not only the pod we require but other unrequired pod will also be placed on nodes
+Only Taints ==> pod might go into nodes which doesn't have any taints at all
+
+Using them together will give desired result
+
+
+==============
+Resource Quota
+=============
+
+
+
+
+
+=====================
+Requests and Limits
+=====================
+Requests and limits --> Kubernetes uses to control resources such as CPU and memory.
+
+Requests --> considered during scheduling.  If a container requests a resource, Kubernetes will only schedule it on a node that can give it that resource.
+            usually we can put the requests =  minimum resource it requires to run
+
+defalut requests for each container
+        cpu for container= 0.5 cpu
+        memory = 256 mi  
+
+default limits for each container
+        cpu for container = 1 cpu
+        memory = 512 mi
+
+ we can modify above using requests and limits field
+
+1cpu = 1vcpu in AWS
+Gi= Gibibyte
+Mi = Mebibyte
+
+Limits --> make sure a container never goes above a certain value.
+             
+
+
+
+=================================
+Role-Based Access Control (RBAC)
+=================================
+
+RBAC --> restricts access to valuable resources based on the role the user holds
+
+
+https://www.adaltas.com/en/2019/08/07/users-rbac-kubernetes/
+
+1.Create a private key
+2.Create a certificate signing request (CSR)
+       CN is the username and O is the Organisation group
+3.Sign the CSR with the Kubernetes CA
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+======================
+Security of k8
+======================
+
+HTTP -> communiction unencrypted
+ the data transferred is in plain text and anyone hacks it can easily know the credentials/secret data
+
+HTTPS -> Hypertext Transfer Protocol Secure
+nothing but HTTP over SSL
+
+HTTPS --> Communiction between browser and web server is encrypted
+
+SSL certificate --> web server digital certificate
+          - verifies identity of webserver and its public key
+        . - issued by third party CA (certificate authority)
+
+Transport Layer Security (TLS) is an updated version of Secure Socket Layer (SSL) but people still call it SSL
+
+Encryption Types
+ 1. Symmetric
+==============
+  single key is used for encryption and decryption.
+
+Since the key also needs to be exchanged to be able to decrypt, there is risk of being hacked during the exchange.
+
+So we can use Symmetric encryption with Asymmetric.
+
+
+ 2. Asymmetric
+==============
+    Two keys are used --> public,private
+
+One of the keys must be used to encrypt and other to decrypt. One key can't do both.
+
+Ususally we share public key, so we use public key to encrypt and private key to decrypt.
+
+
+
+Example:
+
+User request https://www.yahoo.com/ from web server 
+
+1. browser requests secure pages from yahoo webserver
+
+2. yahoo sends its public key ( yahoo public key ) + ssl certificate which is issued by CA
+
+3. Once browser receives the ssl certificate, verifies the digital certificate.
+ssl certificate are generated using CA private key's. All browsers will have major CA's public key.
+
+4. Now browser has yahoo public key and trust has been established. Now the data is encrypted with symmetric key. but sending just data+symmetric key alone is risky as it might be hacked. so 
+(data + symmetric) key is encryped with yahoo public key which web browser received from yahoo.
+
+think of it as --> data+ symmetric key is in a box which is encrypted with yahoo public key and can be open only if you have yahoo private key.
+
+5. Yahoo recieves the box, since it has private key, it will decyrpt and use the symmetric key to decrypt the actual data.
+
+Now both ways communication is clear and both have symmetric key and the traffic is encrypted and decrypted b/w them.
+
+
+
+======================
+Security of k8 cluster
+=======================
+
+Host that form cluster --> disabled password based authentication
+                           only ssh key based authentication
+
+
+Secure k8
+---------
+all communication is through api-server, so securing api-server is primary concern
+
+
+kube-apiserver - center of all operations and main point of contact for all the components
+
+we use kubectl utility to interact with kube-apiserver and do all operations
+
+------------------------------
+control access to api server 
+-----------------------------
+
+ 1. who can access ? --> authentication
+
+         different ways to authenticate
+            - files - username & passwords
+            - files - username & tokens
+            - certificates
+            - external authentication providers --eg LDAP
+            - Service accounts ( for machines/other applications ) 
+
+ 2. what can they do ? --> authorization
+
+         different ways
+
+            RBAC - Role based access control
+            ABAC - attribute based access control
+            Node authoriztion
+            Webhook mode
+
+the communication b/w the components can be secured using ssl/tls certificates
+
+all pods can access other pods, restrict access between them using network policies
+
+
+===============
+Authentication
+==============
+
+users of k8 cluster
+1. admin -- administrative tasks
+2. developers  --> to deploy applications
+3. end users --> who access the applications --> security of this is managed by applications internally
+4. other applications/machines --> for integrations --> we use service accounts for this
+
+
+Two Types of users
+1. User --> all requests goes throught kube api-server
+2. Service accounts
+
+Kube api-server will first authenticate and then will process the request
+
+==============================
+User - authentication methods
+=============================
+
+1.Static Password File 
+    we write list of passwords,users,uid,groups in .csv file and add it in apiserver configuration file --basic-auth-file=users.csv
+2.Static Token File
+    we write list off tokens,users,uid,groups in .csv file and add it in apiserver configuration file --token-auth-file=users.csv
+
+ Both above options are not recommended as we write passwords/tokens in clear texts
+
+3.Certificates
+4.Identity services Eg: LDAP
+
+=========================
+TLS Certificates
+=====================
+1. Server Certificates 
+2. Root certificates - CA certificates
+3. Client Certificates
+
+
+
+All certificates will have public and private key
+
+certificates with word 'key' ==> private key
+
+ssl certificate = digital signature + public key
+
+secure all communication 
+              between user and api-server 
+              between different components of cluster
+
+
+Types of certificates we use in cluster to make communication secure
+--------------------------------------------------------------------
+client certificates
+   - for users
+   - kube-scheduler
+   - kube-proxy
+   - kube-api-server ( client for etcd)
+   - kube controller
+
+
+server certificates
+   - kube-api-server
+   - etcd
+   - kubelet
+
+we need CERTIFICATE AUTHORITY ( CA ) to sign all these certificates
+
+Only component in the cluster that talks directly to etcd is kube-apiserver
+
+
+======================
+Certificates Creation
+======================
+different tools available 
+
+
+==================================
+Create user with ssl certificates
+=================================
+
+Create user private key
+-----------------------
+
+openssl genrsa -out user1.key 2048
+
+Create user csr(certificate signing request)
+---------------------------------------------
+openssl req -new -key user1.key -out user1.csr
+
+Approve CSR with CA private key and certificate
+-----------------------------------------------
+openssl x509 -req -in user1.csr -CA /etc/kubernetes/pki/ca.crt -CAkey /etc/kubernetes/pki/ca.key -CAcreateserial -out user1.crt -days 500
+
+
+Creating Role and bind it to the user
+-------------------------------------
+
+
+Set credentials using Certificates and set context
+
+context ==> which user is using which cluster
+
+
+we are using the certificates to set the authentication, this is not a basic authentication
+
+kubectl config set-credentials user1 --client-certificate=/root/user1.crt --client-key=user1.key
+
+kubectl config set-context user1-context --cluster=kubernetes --namespace=test-namespace --user=user1
+   
+-out = output it in
+.key = private key
+ .csr = certificate signing request
+ .crt = certificate
+
+-----------------------------------------------------------------------------------------
+Reason why we don't specify config file is, by default k8 looks for config file in .kube folder of home directory, if we create new user and try
+it asks for config file.
+
+kubectl --kubeconfig=/root/.kube/config get pods
+
+
+k config view  ---> Gives the context with little information. Full info can be get at .kube/config file
+
+when we change the context using command line, it will reflected in .kube/config file
+
+Easy way is to check using k config view command
+
+
+
+
+
+
+
+
+
+
+
+============
+vim settings
+===========
+
+create vimrc file if doesn't exists
+-----------------------------------
+set number 
+set ts=2     #tabstop
+set sts=2    #softtabstop
+set et       # expandtab
+set sw=2    #shift width
+
+For case insensitive search
+-------------------------
+
+/word\c   
+
+n  --> for next word
+
+G --> To go end of the file
+
+d$  --> delete everything after that specific part
+
+0 --> begining of the line
+$ --> go to end of the line
+
+
+
+
+=======
+Switch 
+=======
+-----------------------------------------------------------------------------------------------------------------------------------
+-----------------------------------------------------------------------------------------------------------------------------------
+Eg: 
+
+Assume machine A,B are in same network
+How does Machine A connect to Machine B ?
+
+We connect them to a Switch. We need Interface attached to Machines. 
+
+To see all the interface- physical/virtual
+----------------------- 
+ip link
+
+assign ip address to interface
+-----------------------------
+
+ip addr add <cidr> dev eth0
+
+we added ip address to the network interface device eth0
+
+Now that the interfaces have ip addresses and are connected to Switch, they can communicate each other. 
+
+--------------------------------------------------------------------------------------------------------------------
+
+Assume A,B in one network and C,D in another network
+
+Switch helps in communication within network
+Router helps in communication between networks- router can route the traffic based on ip address
+
+Lets say we are using a router to connect 2 networks. 2 ip's will be assigned to that router ( one from each network )
+
+Even when the router is connected between 2 network, communication doesn't happen because router is just a device. To make commuincation happen, we need configure route
+
+Check exisiting route
+--------------------
+route
+
+Configure Gateway
+-----------------
+B-->C communication
+
+ip route add <destination> via <through network's ip assigned to router>
+ip route add < C network ip> via <through network's ip assigned to router> 
+
+Send Packet from Machine B to C
+-------------------------------
+ to reach C computer( which is in other LAN) from B, go out through B network interface
+
+Instead of configuring every network
+-----------------------------------
+ip route add default via <through network's ip assigned to router>
+ip route add 0.0.0.0 via <through network's ip assigned to router>
+
+It means any Ip destination other than LAN, go out through the router
+
+----------------------------------------------------------------------------
+we can also configure a host to act as a router
+but it should have 2 interfaces
+
+Assume A,B,C
+
+we have A,B in one network, B,C in another network
+
+A,B can communicate and B,C can communicate as they are in same LAN.
+
+A-->C communication
+ip route add <C's network CIDR> via <B'c network interface from A's network>
+
+similarly from C-->A
+ip route add <A's network CIDR> via <B'c network interface from C's network>
+
+But by default packets cannot be transferred from one interface to next
+To change it, set the value to 1
+/proc/sys/net/ipv4/ip_forward   --> 1
+
+To make it permanent
+/etc/sysctl.conf
+
+
+Show interfaces 
+ip link
+
+show interfaces with ip address
+ip addr
+
+add ip address to interface
+ip addr add <cidr> dev eth0
+
+show routes
+route
+
+add route
+ip route add <destination network> via <ip assigned to router from host network>
+
+======
+DNS
+=====
+
+give a name to ip address(Machine B) in Host(Machine A)
+-------------------------------------------------------
+
+In Machine A
+/etc/hosts
+
+<ip>   <name>
+
+192.162.1.11 db
+
+but in Truth, machine b hostname might be test1, but for Machine A --> it is db
+
+we can name the machine any name and add any number of machines
+
+Name Resolution = translating name to ip address
+
+But it becomes impossible if we have many entries, so we can manage all hosts in another server called DNS server
+
+
+To point to DNS server
+
+/etc/resolve.conf
+nameserver <ip address of DNS server>
+
+So we only need to change/update only in DNS server
+
+if we have an entry in /etc/hosts and in DNS server
+hosts name will prevail-- we can change this if we want
+
+which means always /etc/hosts file will be checked first and if not found will be checked in DNS server
+
+we can public DNS server which knows all websites
+
+---------------------------------------------------
+www.google.com 
+
+.com .net .edu .org .io --> Top level domain
+
+. -> root
+.com -> Top level domain
+www --> sub domain
+
+app.google.com  ==> app-sub domain
+--------------------------------------------
+DNS within company
+
+if we want to autocomplete our domain and only want to use sub domain
+Eg for web.mycompany.com we want just use web for ping
+
+/etc/resolv.conf
+search mycompany.com
+
+Now it works
+
+ping web
+
+it automatically adds mycompany.com as well
+its like ping web.mycompany.com
+
+Record Types
+A --> IP to domain
+Cname --> domain to domain
+
+--------------------------------------------------------
+
+nslookup www.google.com
+nslookup checks only public DNS
+
+dig www.google.com
+
+to check the DNS
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+-----------------------------------------------------------------------------------------------------
+-----------------------------------------------------------------------------------------------------
+
+Switch creates the network (LAN).
+with the help of switch, the computers in the network communicate
+
+To connect to Switch we need an interface. 
+
+Switch only records the MAC addresses of the machines in the network. Hub is older gen and doesn't record MAC addresses.
+That is the reason we need router to communicate with other machine in other network.
+Router has the intelligence to route the traffic based on the ip address. 
+=================
+Network Interface
+=================
+
+
+Connecting an interface to a network makes it a part of that network. Therefore, the IP address is a property of the connection, not the host.
+
+In order to connect to the network, a computer must have at least one network interface. Each network interface must have its own unique IP address.
+
+ The IP address that you give to a host is assigned to its network interface, sometimes referred to as the primary network interface.
+
+The basic unit of information to be transferred over the network is referred to as a packet. 
+
+ip addr add <cidr> dev eth0
+
+dev = device
+eth0 = ethernet0 
+
+show all interfaces
+-------------------
+ip link
+LOOPBACK output is the device itself. 
+
+The loopback device is a special, virtual network interface that your computer uses to communicate with itself. It is used mainly for diagnostics and troubleshooting, and to connect to servers running on the local machine.
+
+
+When a network interface is disconnected--for example, when an Ethernet port is unplugged or Wi-Fi is turned off or not associated with an access point--no communication on that interface is possible, not even communication between your computer and itself
+
+=======
+Router
+=======
+A router is a machine that forwards packets from one network to another. To do this, the router must have at least two network interfaces. A machine with only one network interface cannot forward packets; it is considered a host.
+
+list all route entries
+---------------------
+route
+ 
+adding routes
+
+ip route add <destination> via <interface>
+ip route add default via 192.168.0.1
+
+===================
+network namespaces
+==================
+
+A network namespace is logically another copy of the network stack,with its own routes, firewall rules, and network devices.
+
+
+we just created the namespace, but we need to attach interfaces for network connectivity
+
+Virtual Ethernet interfaces always come in pairs,whatever comes in one veth interface will come out the other peer veth interface
+
+You can verify that the veth pair was created using this command:
+
+ip link list
+
+Execute command in newly created network namespace
+ip netns exec <network namespace name> <command>
+
+
+
+
+===================
+Network NameSpaces
+===================
+
+namespace = like a room in a house -- provide isolation and cannot see anything outside namespace
+but host can see all ns and also establish connection between ns
+
+For a host, it has its own interface and route table, ARP table 
+
+When we create a container, we create a network namespace so that it gets isolated network
+
+
+========================================================
+Create 2 netns and set up the communication
+============================================================
+
+created 2 network namespaces
+----------------------------
+ ip netns add cont1
+ ip netns add cont2
+
+ip netns add/del <netns name>
+
+list the name spaces created
+----------------------------
+ ip netns
+
+we need network interface to be attached to have communication between netns
+---------------------------------------------------------------------------
+virtual network interface always comes in pair
+
+ ip link add veth-cont1 type veth peer name veth-cont2
+
+for veth pair --> type = veth peer name
+for switch --> type = bridge
+
+Set those interfaces to respective netns
+----------------------------------------
+ ip link set veth-cont1 netns cont1
+ ip link set veth-cont2 netns cont2
+
+ ip link set <interface> netns <netns name>
+
+Assign ip addresses to network interface
+---------------------------------------
+ ip netns exec cont1 ip addr add 192.168.15.5/24 dev veth-cont1
+ ip netns exec cont2 ip addr add 192.168.15.6/24 dev veth-cont2
+
+Set the interfaces up
+----------------------
+ ip netns exec cont1 ip link set veth-cont1 up
+ ip netns exec cont2 ip link set veth-cont2 up
+
+Check if the interfaces are up
+------------------------------
+ ip netns exec cont1 ip link
+ ip netns exec cont2 ip link
+
+Try ping and see
+----------------
+ ip netns exec cont1 ping 192.168.15.6
+
+Now we added the link between two network namepaces, What if there are many, we add a switch
+
+delete the virtual interface
+-----------------------------
+ip netns exec cont2 ip link del veth-cont2
+
+since it is a pair, if you delete one, both veth will be delete
+
+ip link del veth-0 ---> delete virtual interface
+======================================
+Create a switch and connect the netns
+======================================
+
+ ip netns add cont1
+ ip netns add cont2
+  
+ created a virtual swithc --> type will be bridge
+--------------------------------------------------
+ ip link add veth-0 type bridge
+
+create virtual interface for all netns and connect one end to switch and other end to netns
+-------------------------------------------------------------------------------------------
+
+  ip link add cont1-veth type veth peer name cont1-veth-br
+  ip link add cont2-veth type veth peer name cont2-veth-br
+
+  ip link set cont1-veth netns cont1
+  ip link set cont2-veth netns cont2
+
+  ip link set cont2-veth-br master veth-0
+  ip link set cont1-veth-br master veth-0
+
+add ip address to interfaces
+----------------------------
+
+  ip netns exec cont1 ip addr add 192.168.15.1/24 dev cont1-veth
+  ip netns exec cont2 ip addr add 192.168.15.2/24 dev cont2-veth
+
+set all the interfaces up
+-------------------------
+
+  ip netns exec cont1 ip link set cont1-veth up
+  ip netns exec cont2 ip link set cont2-veth up
+  ip link set veth-0 up
+  ip link set cont1-veth-br up
+  ip link set cont2-veth-br up
+
+ping
+----
+   ip netns exec cont2 ping 192.168.15.1
+
+Establish connection between netns and host
+-------------------------------------------
+ip addr add 192.168.15.3/24 dev veth-0
+
+add ip address to switch and we can establish connection
+
+Establish connection between netns in host and outside world
+------------------------------------------------------------
+
+we need add route and also need NAT gateway 
+
+ip netns exec cont1 ip route default via <ip assigned to switch> 
+ip netns exec cont1 ip route default via 192.168.15.3
+
+
+
+
+
+==========
+ARP table
+==========
+
+ARP stands for Address Resolution Protocol. When you try to ping an IP address on your local network, say 192.168.1.1, your system has to turn the IP address 192.168.1.1 into a MAC address. This involves using ARP to resolve the address, hence its name.
+
+Systems keep an ARP look-up table where they store information about what IP addresses are associated with what MAC addresses
+
+
+
+
+==================
+Docker Networking
+==================
+
+Docker offers 3 kinds of networks
+1. none
+2. Host
+3. Bridge
+
+none = No network provided, we can configure our own network
+
+Host = No isolated network for containers. if nginx is run it is directly accessible on host port 80. 
+But all ports must be unique as Host port is direclty being used
+
+Bridge = This is similar to netns.
+Docker creates a bridge network which is private inside the Host.
+Every time a container is created, like we added virtual network interface, docker creates and connect to the bridge network
+
+with the help of NAT, port forwarding will be done
+
+
+
+
+============
+Pod Networking
+=============
+
+ CNI plugin configured to be used on this kubernetes cluster = /etc/cni/net.d/
+ 
+Check all plugins supported plugins
+----------------------------------
+
+ ps aux | grep kubelet
+
+ look for --cni-bin-dir  ==> it tells which all supported plugins are available and /etc/cni/net.d/ tells which one is being used.
+
+What binary executable file will be run by kubelet after a container and its associated namespace are created.
+Look at the type field in file /etc/cni/net.d/10-weave.conf
+
+
+
+===========================
+Important commands
+======================
+
+k get all --all-namespaces
+k get po --all-namespaces
+
+overwriting existing label
+k label node two color=green --overwrite
+
+====================
+Cluster Maintenance
+===================
+
+Operating System Upgrade
+-----------------------
+If the node goes down, the pod wont be terminated automatically, it waits until pod-eviction-timeout which is set in kube-controller-manager
+Only after the pod-eviction-timeout, pod will be considered dead
+
+Take down a node for system upgrade - for patches or any changes
+
+k drain node1
+pods on that node will be terminated gracefully and becomes unschedulable ( new pods won't be scheduled )
+
+k uncordon node1
+This makes the node schedulable and should be done after 'k drain node1' 
+
+
+We can make nodes unschedulable
+k cordon node1
+If there are any existing pods, it will remain but it won't take any new pods
+
+=============
+Software version
+===============
+
+v1.19.2
+
+1 --> Major release
+19 --> Minor release -- features, functionalities 
+2 --> patch release,bug fixes
+
+k8 only supports last 3 releases( current and last 2 minor releases)
+
+etcd cluster and coreDNS are seperate projects and will have different versions
+
+
+==================================
+Upgrade from one Version to another
+===================================
+
+Since api server is the main component, none of the other components in control plane/worker nodes can higher. But kubectl ( utility tool ) can be higher
+
+kube-apiserver     ==> x
+controll-manager   ==> x, x-1
+kube-scheduler     ==> x, x-1
+
+kubelet            ==> x, x-1, x-2
+kube-proxy         ==> x, x-1, x-2
+
+kubectl            ==> x+1, x, x-1
+
+It's always recommended to go up the version by 1. like up to 1.16 --> 1.17 --> 1.18
+
+when you upgrade the master/control plane, all its components will be down for that time but everything with worker node will be functional. but since controller/scheduler are down --> if pods go down, it doesn't spin up new one.
+You cant access k8 since api-server will also be down, cannot make any changes until master/control plane comes to normal
+
+=========================
+Upgrade using kubeadm
+=========================
+
+kubeadm upgrade plan
+-------------------
+
+kubeadm upgrade apply <version>
+--------------------------------
+it only upgrades control plane components
+
+upgrade kubeadm before upgrading any other components. kubeadm will be of same version as k8.
+
+Since we installed kubelet and kubectl seperately, we have to upgrade them separately.
+
+apt-get upgrade kubelet=<version> -y
+-------------------------------------
+kubeadm upgrade node config --kubelet-version <version>
+-------------------------------------------------------
+systemctl restart kubelet
+-------------------------
+
+To disable swap ==> swapoff -a
+
+======================
+======================
+Install using kubeadm
+======================
+======================
+
+
+Go to Installing kubeadm
+      -----------------
+=========================================
+1. Letting iptables see bridged traffic
+=========================================
+
+
+To check if it exists
+---------------------
+lsmod | grep br_netfilter
+
+To load 
+-------
+sudo modprobe br_netfilter
+
+additional parameters
+----------------------
+
+cat <<EOF | sudo tee /etc/sysctl.d/k8s.conf
+net.bridge.bridge-nf-call-ip6tables = 1
+net.bridge.bridge-nf-call-iptables = 1
+EOF
+sudo sysctl --system
+
+=================================
+2. Download Container Run time
+================================
+
+Follow the documentation except for 
+
+## Add Docker's official GPG key
+curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo apt-key add -
+
+===========================================
+3.Installing kubeadm, kubelet and kubectl
+==========================================
+
+follow documentation
+
+====================================
+4. Creating a cluster with kubeadm
+====================================
+
+
+follow steps for Initializing your control-plane node
+----------------------------------------------------
+This command only on control plane
+
+kubeadm init --pod-network-cidr 10.244.0.0/16 --apiserver-advertise-address=<ip-address of control plane>
+create folders given in output
+
+To get ip address of control plane ===> ip addr --> first interface
+
+======================
+5. create pod network
+=====================
+
+Before join pod network must be configured
+
+==============
+6. Join
+=============
+
+Join in workers node
+
+
+==============================================
+Install a specific kubeadm version
+=============================================
+
+apt list kubeadm -a 
+apt list kubelet -a
+apt list kubectl -a
+-------------------
+
+This command will you show all the exisiting versions in ubuntu
+
+apt-get install kubeadm=<version you find from above command>
+-------------------------------------------------------------
+
+
+How to prevent updating of a specific package?
+----------------------------------------------
+sudo apt-mark hold <package-name>
+
+we use this after we downloaded kubectl,kubelet,kubeadm so that it sticks to that particular version
+
+
+
+========================================
+etcd backup and restore
+========================
+
+
+
+
+
+
+--data-dir=/var/lib/etcd
+-------------------------- 
+This is where data is stored
+
+For all etcdctl commands 
+endpoints
+cacert
+cert
+key
+
+Take snapshot
+ETCDCTL_API=3 etcdctl snapshot save snapshotdb 
+
+
+see status
+ETCDCTL_API=3 etcdctl --write-out=table snapshot status snapshotdb
+
+
+stop kube-apiserver
+service kube-apiserver stop
+
+Restore
+ETCDCTL_API=3 etcdctl snapshot save snapshotdb --data-dir --initial-cluster --initial-cluster-token --initial-advertise-peer-urls
+
+systemctl daemon-reload
+systemctl etcd restart
+
+service kube-apiserver start
+
+
+
