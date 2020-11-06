@@ -253,7 +253,7 @@ use set() to see what time last request was served.
 
 also can add set() at begining to see what time request was received and what time it was served
 
-There are many out of the box functions/utility functions to find commonly use cases like requests in progess, time taken to server requests, etc
+There are many out of the box functions/decorators (using @ above method) to find commonly use cases like requests in progess, time taken to server requests, etc
 
 ===============
 Summary Metrics
@@ -262,6 +262,14 @@ Summary Metrics
 observe method
 
 Eg reqeust latency, 
+
+=================
+Histogram metrics
+=================
+similar to summary metrics but more eloborate, more functionality
+uses observe method
+
+
 
 
 
