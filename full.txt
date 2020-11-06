@@ -1,0 +1,351 @@
+
+
+
+What is Prometheus ?
+====================
+
+It is monitoring and alerting tool.
+It is full fledged monitoring system with its Alert manager
+It collects metrics from its targets by scraping http endpoints.
+
+analyse how application/node is working based on metrics.
+It uses time series data.
+
+It uses PromQL query language, it is read only.i.e it only can fetch data ( cannot data )
+
+We add instrumentation to your code via prometheus client libraries like Go, Java, Python, Ruby etc
+
+==================================
+What should a monitoring tool do ?
+==================================
+
+Collect or listen to events with a timestamp
+Store the metrics/events
+Support quering
+provide graphical monitoring
+alerting
+
+
+===================
+Terms in Prometheus
+====================
+
+Scraping = collecting/extracting
+monitoring = keep an eye on something, collect and record activities in target machine/application
+             and analyse if they are reaching their objective 
+Alert = by product of monitoring. Set a rule/condition, if things doesn't go in accordance to rule,
+         send alert
+Alerts are sent from Prometheus to Alertmanager
+Alertmanager ==> alerts are fired from prometheus to alertmanager. Alertmanager sends notifications
+Target ==> object(application which metrics you want to collect ( scrape )
+instance ==> the endpoint you can scrape
+        prometheus collects metrics from an endpoint
+          Eg: <ip>:<port>
+job ==> collection of instances
+Sample ==> single value at a point in time in a time series
+
+Machine/Applications --> collect metrics ==> Prometheus --> alerts ==> Alertmanager --> send notification ==> Email,PagerDuty, Slack
+
+
+===========================
+Architecture - Prometheus
+=========================
+
+1. Prometheus Server
+      retrieval = scrapes(metrics) data from targets ( machine/application)
+      TSDB/storage = stores that data in TSDB( Time Series DataBase ) on Node ( HDD/SSD ) 
+      Http server = that data is made available to UI( PromQL ), other api's on http endpoint
+2. Prometheus targets ( how does prometheus gets metrics )
+      Prometheus server pulls metrics from targets.
+        But some jobs are short lived and can't pull metrics from them, so the metrics are pushed to Pushgateway 
+              and prometheus server pulls metrics from Pushgateway
+3. Service discovery
+      prometheus uses service discovery to find its targets( incase of dynamic ip's/targets )
+4. Alertmanager
+      alerts are fired from prometheus to alertmanager and then alert manager will send notification
+5. data/metrics availibility
+      - webUI ( using PromQL queries )
+      - Grafana
+      - Other api clients
+
+==========
+LifeCycle
+==========
+1. find its target ( using service discovery )
+2. Pull metrics from targets
+3. Store them in TSDB
+4. make it available at HTTP endpoint
+5. fire alerts to Alertmanager based on conditions/rules set
+
+--------------------------------
+Prometheus pulls metrics but how ?
+----------------------------------
+we need to add instrumentation ( which produces metrics ) to application code using prometheus client libraries
+
+
+prometheus pulls its own metrics, you can find it in targets ( on webUI)
+
+==============
+PromQL queries
+==============
+
+up ===> outputs lists of targets prometheus is scraping
+
+Eg: up{instance="localhost:9090",job="prometheus"}
+    metrics{key:value}
+
+up ---> metrics name
+instance --> endpoint
+job --> job_name property will give in config file(prometheus.yml)
+
+
+you could check the metrics at a specific time.
+
+==================
+prometheus.yml --> config file
+================
+This is where we define 
+    - alert manager
+    - targets ( use service discovery for dynamic targets )
+    - rules files ( create rules in it and it will give alerts as we define )
+    - how often you want to scrape
+    - how often to evaluate rules
+and much more
+
+change global settings in individuals jobs if required.
+
+By default prometheus expects the metrics to be at <target>/metrics
+
+
+========================================
+How and from where the metrics are coming
+========================================
+
+Once the prometheus is started,
+First it goes to config file and loads the settings and starts scraping on targets
+
+Every code ( application) which has instrumentation will expose metrics at http endpoint
+
+
+===========
+Exporters
+==========
+
+Application --> To get metrics from them --> add instrumentation to code using client libraries
+
+What if you can't add instrumentation ? eg: machines, linux kernel or no access to code ?
+
+Exporter --> software or number of libraries which exports existing metrics
+
+Exporter --> gathers data from target --> transform data in correct format --> send it to Prometheus server
+
+There are different types of exporters we can use
+
+Node exporter ==> linux
+wmi exporter ==> windows
+
+===========================
+Node Exporter, wmi exporter
+==========================
+
+CPU, memory, disk space, disk I/O, network bandwith etc metrics will be exposed
+
+node exporter ==> for linux
+wmi exporter ==> for windows
+
+================
+client libraries
+===============
+client libraries( few lines of code) = how to add instrumentation to the application
+
+client libraries ==> officially provided by prometheus for some languages and also third party available
+
+metrics type
+1. counter --> only increases or can reset to zero on restart
+          Eg: requests received
+              errors
+              requests served
+              tasks completed
+commonly used methods inc()
+
+  with that output we can use different functions to get desired output.
+      Eg: rate function --> frequency of requests per sec
+          sum operator --> sum of requests on all domain paths
+
+2. Guage --> can go up or down
+          Eg temperature, memory usage
+commonly used methods inc(), dec(), set()
+
+3. summary --> observation
+        how much time it look application to respond
+        latency 
+        request size
+commonly used methods  observer()
+
+4. Histogram --> similar to summary but counts them in configurable buckets
+
+===========================================
+create custom metrics using client library
+===========================================
+
+How does application show metrics and on which ip ?
+--------------------------------------------------
+
+metrics will be expose at some <ip>:<port>/metrics
+so we add that instrumentation to application code and expose those metrics at the <ip>:<port>/metrics we want
+we configure that ip address as target in prometheus and monitor
+
+counter 
+   number of http requests
+   visitors to website
+   errors
+guage
+  cpu utilization
+  
+
+the application developer will name the custom metrics following metrics naming conventions
+Eg: Counter('metric name', ' short description of metrics')
+that metrics name will appear on that <ip>:<port>/metrics we configured in applicaiton code, with the description
+
+Use case - finding number of requests and frequency of requests
+---------------------------------------------------------------
+
+using counter ==> find total number of requests
+ total number of requests received doesn't help much. 
+but the frequency per second at which requests are coming will help.
+using rate function ==> we can acheive no of requests receiving per second
+
+Using different functions,operators, metrics types ==> create your own custom metrics and use it in application
+
+use case - adding labels to metrics 
+------------------------------------
+hitting abc.com or abc.com/watch both will be counted as request
+but to differtiate between them use labels in (instrumentation) metrics configuring
+
+Eg:  <metric name>{path="/watch"}  5
+     <metric name>{path="/food"}   10
+by using sum operator we can find total request on website
+
+We can have many other lables. This way we can create customised metrics
+
+
+=============
+Guage Metrics
+=============
+ 
+with counter, we try to find how fast metrics is going up
+with guage we see actual value/state 
+
+Eg:
+memory utilisation at this time
+how many requests are currently in-progress
+
+guage - inc(), dec(), set()
+
+Use case- find how many requests are in progess / being server
+------------------------------------------------------------
+
+at start of some method, use inc() to increase requests by 1
+and at end use dec() so that if request is completed decrease by 1
+add at end use set() to see what time request was served
+
+use set() to see what time last request was served.
+
+also can add set() at begining to see what time request was received and what time it was served
+
+There are many out of the box functions/utility functions to find commonly use cases like requests in progess, time taken to server requests, etc
+
+===============
+Summary Metrics
+===============
+
+observe method
+
+Eg reqeust latency, 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
