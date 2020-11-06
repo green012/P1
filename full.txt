@@ -316,10 +316,15 @@ Library instrumentation
 ------------------------
 kind of mini services
 
-    
+=================
+Recording Rules - save commonly used expressions
+=================
+precompute frequently needed or compute expensive expressions and save their results as a new set of time series
 
+rules.yml ==> expressions with a name
 
-
+add the file config file ( prometheus.yml
+saves time as computation on fly will take time ( even though it's only milli seconds but better to save in rules files as we need/use it commonly)
 
 
 
