@@ -200,12 +200,15 @@ counter
    visitors to website
    errors
 guage
-  cpu utilization
-  
+  cpu utilization  
 
 the application developer will name the custom metrics following metrics naming conventions
 Eg: Counter('metric name', ' short description of metrics')
 that metrics name will appear on that <ip>:<port>/metrics we configured in applicaiton code, with the description
+
+==============
+counter Metrics
+=============
 
 Use case - finding number of requests and frequency of requests
 ---------------------------------------------------------------
@@ -259,7 +262,8 @@ There are many out of the box functions/decorators (using @ above method) to fin
 Summary Metrics
 ===============
 
-observe method
+Like summary metrics, histogram metrics are used to track the size of events, usually how long they take, via their observe method
+A summary is a combination of other types, to make common patterns simpler to use. A summary consists of two counters, and optionally some gauges
 
 Eg reqeust latency, 
 
@@ -269,8 +273,50 @@ Histogram metrics
 similar to summary metrics but more eloborate, more functionality
 uses observe method
 
+Like summary metrics, histogram metrics are used to track the size of events, usually how long they take, via their observe method
 
+========================================
+Where and how much to do instrumentation
+========================================
+ what to instrument ==> everything --> we should get atleast rought idea of all components
 
+==================================
+key metrics that are very important
+==================================
+
+instrument ---> services, libraries
+
+Service instrumentation 
+------------------------
+1.online serving system -- human/other system waiting for response
+  - request rate
+  - latency
+  - error rate
+  - in progress requests
+
+find these metrics both on client side and server side
+
+2.offline processing system -- no one waiting for response
+    batching of work is common here
+   EG: log processing
+    - track items coming in
+    - how many are in progess
+    - last time you processed something
+    - how many items were sent out
+    - errors that occurs
+
+3.Batch jobs -- similar to offline processing system but doesn't run continuously
+ run on regular schedule
+scraping will be difficult- use pushgateway
+      - how long it took to run
+      - overall runtime
+      - time at which last job completed( failed/success)
+
+Library instrumentation
+------------------------
+kind of mini services
+
+    
 
 
 
